@@ -1,7 +1,12 @@
 import type { Metadata, Viewport } from 'next';
+import dynamic from 'next/dynamic';
 import { QueryProvider } from '@/providers/query-provider';
-import { ServiceWorkerRegistrar } from '@/providers/sw-registrar';
 import '@/styles/globals.css';
+
+const ServiceWorkerRegistrar = dynamic(
+  () => import('@/providers/sw-registrar').then((m) => m.ServiceWorkerRegistrar),
+  { ssr: false },
+);
 
 export const metadata: Metadata = {
   title: 'Palomino Village OS',

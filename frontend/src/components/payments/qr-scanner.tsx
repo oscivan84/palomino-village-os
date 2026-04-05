@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import { paymentsApi } from '@/lib/api';
 import { Camera, CheckCircle, XCircle, Loader2, MapPin } from 'lucide-react';
 
@@ -155,15 +156,23 @@ export function QrScanner({ onSuccess, onError }: Props) {
 }
 
 /**
- * Lazy-load de react-qr-reader para evitar carga en SSR.
+ * Lazy-load de react-qr-reader con useEffect para evitar
+ * import en cada render y problemas de SSR.
  */
 function QrReaderLazy({ onScan }: { onScan: (data: string | null) => void }) {
-  const [QrReader, setQrReader] = useState<any>(null);
+  const [QrReaderComp, setQrReaderComp] = useState<any>(null);
 
-  if (!QrReader) {
+  useEffect(() => {
+    let cancelled = false;
     import('react-qr-reader').then((mod) => {
-      setQrReader(() => mod.QrReader);
+      if (!cancelled) setQrReaderComp(() => mod.QrReader);
+    }).catch(() => {
+      // react-qr-reader no disponible (ej: sin cámara)
     });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!QrReaderComp) {
     return (
       <div className="aspect-square bg-gray-100 rounded-xl flex items-center justify-center">
         <Loader2 size={32} className="animate-spin text-gray-400" />
@@ -173,7 +182,7 @@ function QrReaderLazy({ onScan }: { onScan: (data: string | null) => void }) {
 
   return (
     <div className="rounded-xl overflow-hidden">
-      <QrReader
+      <QrReaderComp
         onResult={(result: any) => {
           if (result) onScan(result.getText());
         }}
