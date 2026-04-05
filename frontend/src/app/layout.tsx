@@ -38,8 +38,7 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
       <body className="font-sans">
-        <QueryProvider>{children}</QueryProvider>
-        <ServiceWorkerRegistrar />
+        {children}
       </body>
     </html>
   );
