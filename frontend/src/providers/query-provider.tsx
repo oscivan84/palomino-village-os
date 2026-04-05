@@ -10,10 +10,11 @@ export function QueryProvider({ children }: { children: ReactNode }) {
         defaultOptions: {
           queries: {
             staleTime: 60 * 1000,
-            retry: 2,
+            retry: 1,
             refetchOnWindowFocus: false,
-            // Offline-first: usar datos de cache mientras se revalida
             networkMode: 'offlineFirst',
+            // No lanzar excepciones no capturadas al UI
+            throwOnError: false,
           },
           mutations: {
             networkMode: 'offlineFirst',

@@ -20,7 +20,14 @@ export default function TorneosPage() {
 
   const { data: leaderboard, isLoading } = useQuery<EloScore[]>({
     queryKey: ['leaderboard', selectedType],
-    queryFn: () => tournamentsApi.getLeaderboard(selectedType),
+    queryFn: async () => {
+      try {
+        return await tournamentsApi.getLeaderboard(selectedType);
+      } catch {
+        return [];
+      }
+    },
+    retry: 1,
   });
 
   return (

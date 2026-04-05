@@ -17,7 +17,14 @@ export default function PagosPage() {
 
   const { data: transactions, isLoading } = useQuery<Transaction[]>({
     queryKey: ['transactions', role],
-    queryFn: () => paymentsApi.getTransactions(role),
+    queryFn: async () => {
+      try {
+        return await paymentsApi.getTransactions(role);
+      } catch {
+        return [];
+      }
+    },
+    retry: 1,
   });
 
   return (
