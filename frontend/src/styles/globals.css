@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-background: #f8fafc;
+    --color-foreground: #0f172a;
+  }
+
+  body {
+    @apply bg-[var(--color-background)] text-[var(--color-foreground)] antialiased;
+    /* Prevenir zoom en inputs móviles */
+    touch-action: manipulation;
+  }
+
+  /* Touch-friendly: todos los botones e inputs con tamaño mínimo 48px */
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    @apply min-h-touch;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-palm-600 text-white px-6 py-3 rounded-xl font-semibold
+           min-h-touch flex items-center justify-center gap-2
+           active:bg-palm-700 transition-colors
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply bg-ocean-100 text-ocean-800 px-6 py-3 rounded-xl font-semibold
+           min-h-touch flex items-center justify-center gap-2
+           active:bg-ocean-200 transition-colors;
+  }
+
+  .btn-outline {
+    @apply border-2 border-palm-600 text-palm-600 px-6 py-3 rounded-xl font-semibold
+           min-h-touch flex items-center justify-center gap-2
+           active:bg-palm-50 transition-colors;
+  }
+
+  .card {
+    @apply bg-white rounded-2xl p-4 shadow-sm border border-gray-100;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-3 rounded-xl border border-gray-200
+           min-h-touch text-base
+           focus:outline-none focus:ring-2 focus:ring-palm-500 focus:border-transparent
+           placeholder:text-gray-400;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-verified {
+    @apply badge bg-palm-100 text-palm-800;
+  }
+
+  .badge-category {
+    @apply badge bg-ocean-100 text-ocean-800;
+  }
+}

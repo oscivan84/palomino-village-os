@@ -1,0 +1,454 @@
+// ============================================================
+// Palomino Village OS — Prisma Schema
+// Arquitectura: Multi-nodo geográfico, usuarios multirrol,
+// muro comunitario, escrow payments (10/90), gamificación ELO
+//
+// Decisiones de diseño:
+// - uuid() para IDs (compatible con pasarelas de pago)
+// - Decimal para montos financieros (precisión exacta COP)
+// - qrSignature @unique → anti-doble-cobro por colisión
+// - elo directo en User + tabla EloScore por tipo de torneo
+// - Naming: lat/lng (spec), reservationAmount/remainingAmount
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum UserRole {
+  TOURIST
+  LOCAL
+  BUSINESS
+  ADMIN
+}
+
+enum PostCategory {
+  PROPERTY        // Inmuebles
+  SERVICE         // Servicios técnicos
+  LOGISTICS       // Logística y transporte
+  JOB             // Ofertas de trabajo
+  EVENT           // Eventos comunitarios
+  GENERAL         // General
+}
+
+enum PostStatus {
+  ACTIVE
+  EXPIRED
+  MODERATED
+  COMPLETED
+}
+
+enum TransactionStatus {
+  PENDING_RESERVATION // Transacción creada, esperando pago del 10%
+  RESERVED            // 10% pagado, técnico en camino
+  QR_GENERATED        // QR firmado generado por técnico al completar
+  COMPLETED           // Saldo final (90%) pagado vía QR + GPS verificado
+  DISPUTED            // Conflicto en el servicio
+  REFUNDED            // Reembolso procesado
+}
+
+enum TournamentType {
+  BILLIARDS
+  SURF
+  SERVICE_RATING  // Cumplimiento de servicios
+  CUSTOM
+}
+
+enum TournamentStatus {
+  REGISTRATION
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ApplicationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+enum NotificationType {
+  PAYMENT
+  SERVICE
+  TOURNAMENT
+  COMMUNITY
+  SYSTEM
+}
+
+// ─────────────────────────────────────────────
+// GEOGRAPHIC NODES (Multi-nodo)
+// ─────────────────────────────────────────────
+
+model Node {
+  id          String   @id @default(uuid())
+  name        String   @unique // "Palomino", "Rincón del Mar", "Capurganá"
+  slug        String   @unique
+  description String?
+  lat         Float
+  lng         Float
+  radius      Float    @default(5) // Radio de acción en KM
+  timezone    String   @default("America/Bogota")
+  currency    String   @default("COP")
+  isActive    Boolean  @default(true)
+  config      Json?    // Configuración específica del nodo
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       UserNode[]
+  posts       Post[]
+  tournaments Tournament[]
+  services    ServiceListing[]
+
+  @@map("nodes")
+}
+
+// ─────────────────────────────────────────────
+// USERS & AUTH
+// ─────────────────────────────────────────────
+
+model User {
+  id            String     @id @default(uuid())
+  phone         String     @unique
+  displayName   String
+  avatarUrl     String?
+  bio           String?
+  roles         UserRole[] @default([TOURIST])
+  elo           Int        @default(1200) // ELO global (snapshot rápido)
+  preferredLang String     @default("es") // "es" | "en"
+  isVerified    Boolean    @default(false)
+  isActive      Boolean    @default(true)
+  lastSeenAt    DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  // Relaciones
+  nodes              UserNode[]
+  posts              Post[]
+  services           ServiceListing[]
+  sentTransactions   Transaction[]     @relation("ClientTransactions")
+  receivedTransactions Transaction[]   @relation("ProviderTransactions")
+  eloScores          EloScore[]        // ELO desglosado por tipo de torneo
+  tournamentEntries  TournamentEntry[]
+  achievements       UserAchievement[]
+  reviews            Review[]          @relation("ReviewAuthor")
+  receivedReviews    Review[]          @relation("ReviewTarget")
+  notifications      Notification[]
+  otpCodes           OtpCode[]
+  jobApplications    JobApplication[]
+
+  @@index([phone])
+  @@map("users")
+}
+
+model UserNode {
+  id        String   @id @default(uuid())
+  userId    String
+  nodeId    String
+  isPrimary Boolean  @default(false)
+  joinedAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, nodeId])
+  @@map("user_nodes")
+}
+
+model OtpCode {
+  id        String   @id @default(uuid())
+  userId    String
+  code      String
+  channel   String   // "whatsapp" | "sms"
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, code])
+  @@map("otp_codes")
+}
+
+// ─────────────────────────────────────────────
+// COMMUNITY WALL (Muro de Comunidad)
+// ─────────────────────────────────────────────
+
+model Post {
+  id          String       @id @default(uuid())
+  authorId    String
+  nodeId      String
+  category    PostCategory
+  status      PostStatus   @default(ACTIVE)
+  title       String
+  body        String
+  images      String[]     // URLs de imágenes optimizadas
+  tags        String[]
+  lat         Float?
+  lng         Float?
+  isPinned    Boolean      @default(false)
+  isVerified  Boolean      @default(false)
+  expiresAt   DateTime?
+  viewCount   Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  author          User             @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  node            Node             @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  jobApplications JobApplication[]
+
+  @@index([nodeId, category, status])
+  @@index([nodeId, createdAt(sort: Desc)])
+  @@index([tags])
+  @@map("posts")
+}
+
+model JobApplication {
+  id        String            @id @default(uuid())
+  postId    String
+  userId    String
+  message   String?
+  status    ApplicationStatus @default(PENDING)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@map("job_applications")
+}
+
+// ─────────────────────────────────────────────
+// SERVICE LISTINGS & TRANSACTIONS (Escrow 10/90)
+// ─────────────────────────────────────────────
+
+model ServiceListing {
+  id           String   @id @default(uuid())
+  providerId   String
+  nodeId       String
+  title        String
+  description  String
+  basePrice    Decimal  // Precio base en COP (Decimal para precisión financiera)
+  currency     String   @default("COP")
+  category     String
+  tags         String[]
+  isAvailable  Boolean  @default(true)
+  avgRating    Float    @default(0)
+  totalRatings Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  provider     User          @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  node         Node          @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([nodeId, category])
+  @@map("service_listings")
+}
+
+model Transaction {
+  id                String            @id @default(uuid())
+  clientId          String
+  providerId        String
+  serviceId         String
+  status            TransactionStatus @default(PENDING_RESERVATION)
+
+  // Montos (Decimal para precisión financiera COP)
+  totalAmount       Decimal           // Monto total del servicio
+  reservationAmount Decimal           // El 10% — retenido en escrow
+  remainingAmount   Decimal           // El 90% — pagado vía QR al completar
+  platformFee       Decimal           @default(0) // Comisión plataforma (futuro)
+  currency          String            @default("COP")
+
+  // Seguridad Phygital — QR firmado (HMAC-SHA256)
+  // @unique impide que un técnico reutilice el mismo QR para cobrar dos veces
+  qrSignature       String?           @unique
+  qrPayload         String?           // Datos serializados del QR
+  qrGeneratedAt     DateTime?
+  qrScannedAt       DateTime?
+  escrowReleaseAt   DateTime?         // Momento exacto de liberación de fondos
+
+  // Verificación GPS — ambos a ≤100m
+  serviceLat        Float?            // GPS del técnico al generar QR
+  serviceLng        Float?
+  clientLat         Float?            // GPS del cliente al escanear QR
+  clientLng         Float?
+  gpsVerified       Boolean           @default(false)
+  gpsDistanceMeters Float?            // Distancia calculada Haversine
+
+  // Pasarela de pago
+  gatewayProvider   String?           // "stripe" | "dlocal" | "bold"
+  gatewayPaymentId  String?           // ID externo del pago inicial (10%)
+  gatewayReleaseId  String?           // ID externo del pago final (90%)
+  webhookPayload    Json?             // Último webhook recibido
+
+  completedAt       DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  client   User           @relation("ClientTransactions", fields: [clientId], references: [id])
+  provider User           @relation("ProviderTransactions", fields: [providerId], references: [id])
+  service  ServiceListing @relation(fields: [serviceId], references: [id])
+  review   Review?
+
+  @@index([clientId, status])
+  @@index([providerId, status])
+  @@index([gatewayPaymentId])
+  @@map("transactions")
+}
+
+model Review {
+  id            String   @id @default(uuid())
+  transactionId String   @unique
+  authorId      String
+  targetId      String
+  rating        Int      // 1-5
+  comment       String?
+  createdAt     DateTime @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+  author      User        @relation("ReviewAuthor", fields: [authorId], references: [id])
+  target      User        @relation("ReviewTarget", fields: [targetId], references: [id])
+
+  @@map("reviews")
+}
+
+// ─────────────────────────────────────────────
+// TOURNAMENTS & ELO (Pasaporte Phygital / CNAJ)
+// ─────────────────────────────────────────────
+
+model Tournament {
+  id          String           @id @default(uuid())
+  nodeId      String
+  name        String
+  type        TournamentType
+  status      TournamentStatus @default(REGISTRATION)
+  description String?
+  maxPlayers  Int              @default(32)
+  entryFee    Decimal          @default(0)
+  prizePool   Decimal          @default(0)
+  rules       Json?
+  startsAt    DateTime
+  endsAt      DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  node    Node              @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  entries TournamentEntry[]
+  matches Match[]
+
+  @@index([nodeId, status])
+  @@map("tournaments")
+}
+
+model TournamentEntry {
+  id           String   @id @default(uuid())
+  tournamentId String
+  userId       String
+  seed         Int?
+  placement    Int?     // Posición final
+  registeredAt DateTime @default(now())
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, userId])
+  @@map("tournament_entries")
+}
+
+model Match {
+  id           String   @id @default(uuid())
+  tournamentId String
+  round        Int
+  player1Id    String
+  player2Id    String
+  winnerId     String?
+  score        Json?    // { player1: 3, player2: 1 }
+  playedAt     DateTime?
+  createdAt    DateTime @default(now())
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@map("matches")
+}
+
+/// ELO desglosado por tipo de torneo.
+/// User.elo es el snapshot global; EloScore tiene el detalle.
+model EloScore {
+  id        String         @id @default(uuid())
+  userId    String
+  type      TournamentType
+  score     Int            @default(1200)
+  wins      Int            @default(0)
+  losses    Int            @default(0)
+  streak    Int            @default(0)
+  peakScore Int            @default(1200)
+  updatedAt DateTime       @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@map("elo_scores")
+}
+
+// ─────────────────────────────────────────────
+// ACHIEVEMENTS (Pasaporte Phygital)
+// ─────────────────────────────────────────────
+
+model Achievement {
+  id          String @id @default(uuid())
+  slug        String @unique
+  name        String
+  description String
+  iconUrl     String?
+  category    String // "community", "tournament", "service", "explorer"
+  criteria    Json   // { type: "elo_reach", value: 1500 }
+
+  users UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id            String   @id @default(uuid())
+  userId        String
+  achievementId String
+  unlockedAt    DateTime @default(now())
+  metadata      Json?
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@map("user_achievements")
+}
+
+// ─────────────────────────────────────────────
+// NOTIFICATIONS
+// ─────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt(sort: Desc)])
+  @@map("notifications")
+}
