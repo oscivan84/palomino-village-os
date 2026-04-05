@@ -8,7 +8,6 @@ interface Props {
   onSuccess?: (result: {
     transaction: any;
     fundsReleased: number;
-    gpsVerification: { isValid: boolean; distanceMeters: number };
   }) => void;
   onError?: (error: string) => void;
 }

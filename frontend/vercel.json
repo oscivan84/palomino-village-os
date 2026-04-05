@@ -1,0 +1,10 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "installCommand": "npm install",
+  "env": {
+    "NEXT_PUBLIC_API_URL": "https://palomino-api.railway.app/api/v1",
+    "NEXT_PUBLIC_WS_URL": "https://palomino-api.railway.app/ws"
+  }
+}
