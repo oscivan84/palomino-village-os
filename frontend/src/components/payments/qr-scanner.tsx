@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import dynamic from 'next/dynamic';
+import { useState, useEffect, useRef } from 'react';
 import { paymentsApi } from '@/lib/api';
 import { Camera, CheckCircle, XCircle, Loader2, MapPin } from 'lucide-react';
 
@@ -13,28 +12,55 @@ interface Props {
   onError?: (error: string) => void;
 }
 
-/**
- * Scanner QR que activa verificación GPS simultánea.
- * Usa react-qr-reader (cámara trasera) + Geolocation API.
- *
- * Flujo:
- * 1. Escanear QR → parsear { transactionId, amount, signature }
- * 2. Obtener GPS del cliente en el momento del escaneo
- * 3. Enviar a API: verify-and-release (firma HMAC + proximidad GPS)
- */
 export function QrScanner({ onSuccess, onError }: Props) {
   const [scanning, setScanning] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [result, setResult] = useState<'success' | 'error' | null>(null);
   const [message, setMessage] = useState('');
+  const scannerRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  async function handleScan(data: string | null) {
-    if (!data || processing) return;
+  useEffect(() => {
+    if (!scanning || !containerRef.current) return;
 
+    let stopped = false;
+
+    async function startScanner() {
+      const { Html5Qrcode } = await import('html5-qrcode');
+      if (stopped) return;
+
+      const scanner = new Html5Qrcode('qr-reader-container');
+      scannerRef.current = scanner;
+
+      try {
+        await scanner.start(
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          (decodedText) => {
+            scanner.stop().catch(() => {});
+            if (!stopped) handleScan(decodedText);
+          },
+          () => {},
+        );
+      } catch (err) {
+        console.warn('Camera access failed:', err);
+      }
+    }
+
+    startScanner();
+
+    return () => {
+      stopped = true;
+      scannerRef.current?.stop?.().catch(() => {});
+      scannerRef.current = null;
+    };
+  }, [scanning]);
+
+  async function handleScan(data: string) {
+    if (processing) return;
     setProcessing(true);
 
     try {
-      // 1. Parsear QR: { transactionId, amount, signature }
       const parsed = JSON.parse(data);
       const { transactionId, amount, signature } = parsed;
 
@@ -42,7 +68,6 @@ export function QrScanner({ onSuccess, onError }: Props) {
         throw new Error('QR inválido: faltan campos requeridos');
       }
 
-      // 2. Obtener ubicación del cliente en el momento del escaneo
       const position = await new Promise<GeolocationPosition>(
         (resolve, reject) =>
           navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -53,7 +78,6 @@ export function QrScanner({ onSuccess, onError }: Props) {
 
       const { latitude, longitude } = position.coords;
 
-      // 3. Enviar a API: verificar firma HMAC + proximidad GPS → liberar fondos
       const scanResult = await paymentsApi.scanQr(
         transactionId,
         amount,
@@ -78,7 +102,6 @@ export function QrScanner({ onSuccess, onError }: Props) {
     }
   }
 
-  // Resultado final
   if (result) {
     return (
       <div className="card text-center space-y-4">
@@ -112,16 +135,16 @@ export function QrScanner({ onSuccess, onError }: Props) {
       {scanning ? (
         <div className="space-y-3">
           <h2 className="text-xl font-bold">Pagar Saldo Final (90%)</h2>
-
-          {/* QR Reader: cámara trasera */}
-          <QrReaderLazy onScan={handleScan} />
-
+          <div
+            id="qr-reader-container"
+            ref={containerRef}
+            className="rounded-xl overflow-hidden"
+          />
           {processing && (
             <p className="animate-pulse text-sm text-ocean-600 text-center">
               Verificando ubicación y pago...
             </p>
           )}
-
           <div className="flex items-center justify-center gap-1 text-xs text-gray-400">
             <MapPin size={12} />
             Se verificará tu GPS al escanear (máx 100m del técnico)
@@ -151,44 +174,6 @@ export function QrScanner({ onSuccess, onError }: Props) {
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-/**
- * Lazy-load de react-qr-reader con useEffect para evitar
- * import en cada render y problemas de SSR.
- */
-function QrReaderLazy({ onScan }: { onScan: (data: string | null) => void }) {
-  const [QrReaderComp, setQrReaderComp] = useState<any>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    import('react-qr-reader').then((mod) => {
-      if (!cancelled) setQrReaderComp(() => mod.QrReader);
-    }).catch(() => {
-      // react-qr-reader no disponible (ej: sin cámara)
-    });
-    return () => { cancelled = true; };
-  }, []);
-
-  if (!QrReaderComp) {
-    return (
-      <div className="aspect-square bg-gray-100 rounded-xl flex items-center justify-center">
-        <Loader2 size={32} className="animate-spin text-gray-400" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-xl overflow-hidden">
-      <QrReaderComp
-        onResult={(result: any) => {
-          if (result) onScan(result.getText());
-        }}
-        constraints={{ facingMode: 'environment' }}
-        containerStyle={{ borderRadius: '0.75rem' }}
-      />
     </div>
   );
 }
