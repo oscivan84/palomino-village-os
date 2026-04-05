@@ -1,34 +1,57 @@
 /**
  * Offline-First: Persistencia local con IndexedDB para zonas de baja conectividad.
  * Usa idb-keyval como wrapper liviano.
+ *
+ * Todas las operaciones son no-op en SSR (server-side rendering)
+ * para evitar crashes por acceso a indexedDB inexistente.
  */
-import { get, set, del, keys } from 'idb-keyval';
 
-const CACHE_PREFIX = 'pvo_'; // palomino village os
+const isClient = typeof window !== 'undefined';
+
+async function idbGet<T>(key: string): Promise<T | undefined> {
+  if (!isClient) return undefined;
+  const { get } = await import('idb-keyval');
+  return get<T>(key);
+}
+
+async function idbSet(key: string, value: any): Promise<void> {
+  if (!isClient) return;
+  const { set } = await import('idb-keyval');
+  await set(key, value);
+}
+
+async function idbDel(key: string): Promise<void> {
+  if (!isClient) return;
+  const { del } = await import('idb-keyval');
+  await del(key);
+}
+
+const CACHE_PREFIX = 'pvo_';
 
 export const offlineStore = {
   async cacheFeed(nodeId: string, data: any) {
-    await set(`${CACHE_PREFIX}feed_${nodeId}`, {
+    await idbSet(`${CACHE_PREFIX}feed_${nodeId}`, {
       data,
       cachedAt: Date.now(),
     });
   },
 
   async getCachedFeed(nodeId: string) {
-    const cached = await get(`${CACHE_PREFIX}feed_${nodeId}`);
+    const cached = await idbGet<{ data: any; cachedAt: number }>(
+      `${CACHE_PREFIX}feed_${nodeId}`,
+    );
     if (!cached) return null;
 
-    // Cache válido por 30 minutos offline
     const isStale = Date.now() - cached.cachedAt > 30 * 60 * 1000;
     return { data: cached.data, isStale };
   },
 
   async cacheUser(user: any) {
-    await set(`${CACHE_PREFIX}user`, user);
+    await idbSet(`${CACHE_PREFIX}user`, user);
   },
 
   async getCachedUser() {
-    return get(`${CACHE_PREFIX}user`);
+    return idbGet(`${CACHE_PREFIX}user`);
   },
 
   async queueAction(action: {
@@ -38,17 +61,17 @@ export const offlineStore = {
     body: any;
   }) {
     const queue =
-      (await get<any[]>(`${CACHE_PREFIX}offline_queue`)) || [];
+      (await idbGet<any[]>(`${CACHE_PREFIX}offline_queue`)) || [];
     queue.push({ ...action, queuedAt: Date.now() });
-    await set(`${CACHE_PREFIX}offline_queue`, queue);
+    await idbSet(`${CACHE_PREFIX}offline_queue`, queue);
   },
 
   async getOfflineQueue() {
-    return (await get<any[]>(`${CACHE_PREFIX}offline_queue`)) || [];
+    return (await idbGet<any[]>(`${CACHE_PREFIX}offline_queue`)) || [];
   },
 
   async clearQueue() {
-    await del(`${CACHE_PREFIX}offline_queue`);
+    await idbDel(`${CACHE_PREFIX}offline_queue`);
   },
 
   async syncQueue(fetchFn: typeof fetch) {
@@ -68,7 +91,7 @@ export const offlineStore = {
     }
 
     if (failed.length > 0) {
-      await set(`${CACHE_PREFIX}offline_queue`, failed);
+      await idbSet(`${CACHE_PREFIX}offline_queue`, failed);
     } else {
       await this.clearQueue();
     }
