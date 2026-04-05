@@ -1,4 +1,6 @@
-# render.yaml — Blueprint para Render.com (alternativa a Railway)
+# render.yaml — Blueprint para Render.com
+# Deploy: https://render.com/deploy?repo=https://github.com/oscivan84/palomino-village-os
+
 databases:
   - name: palomino-db
     databaseName: palomino_village_os
@@ -8,10 +10,11 @@ databases:
 services:
   - type: web
     name: palomino-api
-    runtime: docker
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
+    runtime: node
     plan: free
+    rootDir: backend
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npx prisma migrate deploy && node dist/main
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -29,3 +32,5 @@ services:
         value: https://frontend-theta-wheat-29.vercel.app
       - key: GPS_MAX_DISTANCE_METERS
         value: 100
+      - key: OTP_EXPIRY_MINUTES
+        value: 5
